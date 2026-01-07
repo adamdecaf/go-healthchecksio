@@ -3,6 +3,7 @@ package healthchecksio
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,42 +13,46 @@ import (
 	"strings"
 	"time"
 
+	"github.com/moov-io/base/telemetry"
+
 	"github.com/hashicorp/go-retryablehttp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Client interface {
 	// CreateCheck creates a new check
-	CreateCheck(check *CreateCheck) (*Check, error)
+	CreateCheck(ctx context.Context, check *CreateCheck) (*Check, error)
 
 	// GetChecks lists all checks (supports query params: slug, tags)
-	GetChecks(req GetChecks) (*CheckListResponse, error)
+	GetChecks(ctx context.Context, req GetChecks) (*CheckListResponse, error)
 
 	// GetCheck retrieves a single check by UUID or unique_key
-	GetCheck(identifier string) (*Check, error)
+	GetCheck(ctx context.Context, identifier string) (*Check, error)
 
 	// UpdateCheck updates an existing check by UUID
-	UpdateCheck(uuid string, updates *UpdateCheck) (*Check, error)
+	UpdateCheck(ctx context.Context, uuid string, updates *UpdateCheck) (*Check, error)
 
 	// DeleteCheck deletes a check by UUID
-	DeleteCheck(uuid string) (*Check, error)
+	DeleteCheck(ctx context.Context, uuid string) (*Check, error)
 
 	// PauseCheck pauses a check by UUID
-	PauseCheck(uuid string) (*Check, error)
+	PauseCheck(ctx context.Context, uuid string) (*Check, error)
 
 	// ResumeCheck resumes a paused check by UUID
-	ResumeCheck(uuid string) (*Check, error)
+	ResumeCheck(ctx context.Context, uuid string) (*Check, error)
 
 	// GetPings lists pings for a check by UUID or unique_key
-	GetPings(identifier string) (*PingListResponse, error)
+	GetPings(ctx context.Context, identifier string) (*PingListResponse, error)
 
 	// GetPingBody retrieves the body of a specific ping by UUID, ping number (n), and unique_key if needed
-	GetPingBody(uuid string, n int) (string, error)
+	GetPingBody(ctx context.Context, uuid string, n int) (string, error)
 
 	// GetFlips lists status flips for a check by UUID or unique_key (supports query params: seconds, start, end)
-	GetFlips(identifier string, params GetFlipsRequest) (*FlipListResponse, error)
+	GetFlips(ctx context.Context, identifier string, params GetFlipsRequest) (*FlipListResponse, error)
 
 	// Ping sends a ping to a check (success by default; supports hc-ping.com UUID or /api/v3/ping/<unique_key>)
-	Ping(checkURL string, body string, opts ...PingOption) error
+	Ping(ctx context.Context, checkURL string, body string, opts ...PingOption) error
 }
 
 // client is a Healthchecks.io v3 API client
@@ -203,7 +208,13 @@ type FlipListResponse struct {
 }
 
 // CreateCheck creates a new check
-func (c *client) CreateCheck(check *CreateCheck) (*Check, error) {
+func (c *client) CreateCheck(ctx context.Context, check *CreateCheck) (*Check, error) {
+	ctx, span := telemetry.StartSpan(ctx, "healthchecksio-api-create-check", trace.WithAttributes(
+		attribute.String("check.name", check.Name),
+		attribute.String("check.slug", check.Slug),
+	))
+	defer span.End()
+
 	reqBody, err := json.Marshal(check)
 	if err != nil {
 		return nil, err
@@ -214,7 +225,7 @@ func (c *client) CreateCheck(check *CreateCheck) (*Check, error) {
 		return nil, fmt.Errorf("get checks: %v", err)
 	}
 
-	req, err := retryablehttp.NewRequest("POST", address.String(), bytes.NewReader(reqBody))
+	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", address.String(), bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +257,13 @@ type GetChecks struct {
 }
 
 // GetChecks lists all checks (supports query params: slug, tags)
-func (c *client) GetChecks(params GetChecks) (*CheckListResponse, error) {
+func (c *client) GetChecks(ctx context.Context, params GetChecks) (*CheckListResponse, error) {
+	ctx, span := telemetry.StartSpan(ctx, "healthchecksio-api-get-checks", trace.WithAttributes(
+		attribute.String("check.slug", params.Slug),
+		attribute.String("check.tags", params.Tags),
+	))
+	defer span.End()
+
 	address, err := c.buildAddress("/checks/")
 	if err != nil {
 		return nil, fmt.Errorf("get checks: %v", err)
@@ -261,7 +278,7 @@ func (c *client) GetChecks(params GetChecks) (*CheckListResponse, error) {
 	}
 	address.RawQuery = q.Encode()
 
-	req, err := retryablehttp.NewRequest("GET", address.String(), nil)
+	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", address.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -287,13 +304,18 @@ func (c *client) GetChecks(params GetChecks) (*CheckListResponse, error) {
 }
 
 // GetCheck retrieves a single check by UUID or unique_key
-func (c *client) GetCheck(identifier string) (*Check, error) {
+func (c *client) GetCheck(ctx context.Context, identifier string) (*Check, error) {
+	ctx, span := telemetry.StartSpan(ctx, "healthchecksio-api-get-check", trace.WithAttributes(
+		attribute.String("check.identifier", identifier),
+	))
+	defer span.End()
+
 	address, err := c.buildAddress("/checks/", identifier)
 	if err != nil {
 		return nil, fmt.Errorf("get checks: %v", err)
 	}
 
-	req, err := retryablehttp.NewRequest("GET", address.String(), nil)
+	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", address.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -319,8 +341,15 @@ func (c *client) GetCheck(identifier string) (*Check, error) {
 }
 
 // UpdateCheck updates an existing check by UUID
-func (c *client) UpdateCheck(uuid string, updates *UpdateCheck) (*Check, error) {
-	reqBody, err := json.Marshal(updates)
+func (c *client) UpdateCheck(ctx context.Context, uuid string, update *UpdateCheck) (*Check, error) {
+	ctx, span := telemetry.StartSpan(ctx, "healthchecksio-api-update-check", trace.WithAttributes(
+		attribute.String("check.uuid", uuid),
+		attribute.String("check.name", update.Name),
+		attribute.String("check.slug", update.Slug),
+	))
+	defer span.End()
+
+	reqBody, err := json.Marshal(update)
 	if err != nil {
 		return nil, err
 	}
@@ -330,7 +359,7 @@ func (c *client) UpdateCheck(uuid string, updates *UpdateCheck) (*Check, error) 
 		return nil, fmt.Errorf("get checks: %v", err)
 	}
 
-	req, err := retryablehttp.NewRequest("POST", address.String(), bytes.NewReader(reqBody))
+	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", address.String(), bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, err
 	}
@@ -357,13 +386,18 @@ func (c *client) UpdateCheck(uuid string, updates *UpdateCheck) (*Check, error) 
 }
 
 // DeleteCheck deletes a check by UUID
-func (c *client) DeleteCheck(uuid string) (*Check, error) {
+func (c *client) DeleteCheck(ctx context.Context, uuid string) (*Check, error) {
+	ctx, span := telemetry.StartSpan(ctx, "healthchecksio-api-delete-check", trace.WithAttributes(
+		attribute.String("check.uuid", uuid),
+	))
+	defer span.End()
+
 	address, err := c.buildAddress("/checks/", uuid)
 	if err != nil {
 		return nil, fmt.Errorf("get checks: %v", err)
 	}
 
-	req, err := retryablehttp.NewRequest("DELETE", address.String(), nil)
+	req, err := retryablehttp.NewRequestWithContext(ctx, "DELETE", address.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -389,13 +423,18 @@ func (c *client) DeleteCheck(uuid string) (*Check, error) {
 }
 
 // PauseCheck pauses a check by UUID
-func (c *client) PauseCheck(uuid string) (*Check, error) {
+func (c *client) PauseCheck(ctx context.Context, uuid string) (*Check, error) {
+	ctx, span := telemetry.StartSpan(ctx, "healthchecksio-api-pause-check", trace.WithAttributes(
+		attribute.String("check.uuid", uuid),
+	))
+	defer span.End()
+
 	address, err := c.buildAddress("/checks/", uuid, "/pause")
 	if err != nil {
 		return nil, fmt.Errorf("get checks: %v", err)
 	}
 
-	req, err := retryablehttp.NewRequest("POST", address.String(), nil)
+	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", address.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -421,13 +460,18 @@ func (c *client) PauseCheck(uuid string) (*Check, error) {
 }
 
 // ResumeCheck resumes a paused check by UUID
-func (c *client) ResumeCheck(uuid string) (*Check, error) {
+func (c *client) ResumeCheck(ctx context.Context, uuid string) (*Check, error) {
+	ctx, span := telemetry.StartSpan(ctx, "healthchecksio-api-resume-check", trace.WithAttributes(
+		attribute.String("check.uuid", uuid),
+	))
+	defer span.End()
+
 	address, err := c.buildAddress("/checks/", uuid, "/resume")
 	if err != nil {
 		return nil, fmt.Errorf("get checks: %v", err)
 	}
 
-	req, err := retryablehttp.NewRequest("POST", address.String(), nil)
+	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", address.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -453,13 +497,18 @@ func (c *client) ResumeCheck(uuid string) (*Check, error) {
 }
 
 // GetPings lists pings for a check by UUID or unique_key
-func (c *client) GetPings(identifier string) (*PingListResponse, error) {
+func (c *client) GetPings(ctx context.Context, identifier string) (*PingListResponse, error) {
+	ctx, span := telemetry.StartSpan(ctx, "healthchecksio-api-get-pings", trace.WithAttributes(
+		attribute.String("check.identifier", identifier),
+	))
+	defer span.End()
+
 	address, err := c.buildAddress("/checks/", identifier, "/pings/")
 	if err != nil {
 		return nil, fmt.Errorf("get checks: %v", err)
 	}
 
-	req, err := retryablehttp.NewRequest("GET", address.String(), nil)
+	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", address.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -485,13 +534,18 @@ func (c *client) GetPings(identifier string) (*PingListResponse, error) {
 }
 
 // GetPingBody retrieves the body of a specific ping by UUID, ping number (n), and unique_key if needed
-func (c *client) GetPingBody(uuid string, n int) (string, error) {
+func (c *client) GetPingBody(ctx context.Context, uuid string, n int) (string, error) {
+	ctx, span := telemetry.StartSpan(ctx, "healthchecksio-api-get-ping-body", trace.WithAttributes(
+		attribute.String("check.uuid", uuid),
+	))
+	defer span.End()
+
 	address, err := c.buildAddress("/checks/", uuid, "/pings/", strconv.Itoa(n), "/body")
 	if err != nil {
 		return "", fmt.Errorf("get checks: %v", err)
 	}
 
-	req, err := retryablehttp.NewRequest("GET", address.String(), nil)
+	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", address.String(), nil)
 	if err != nil {
 		return "", err
 	}
@@ -523,7 +577,12 @@ type GetFlipsRequest struct {
 }
 
 // GetFlips lists status flips for a check by UUID or unique_key (supports query params: seconds, start, end)
-func (c *client) GetFlips(identifier string, params GetFlipsRequest) (*FlipListResponse, error) {
+func (c *client) GetFlips(ctx context.Context, identifier string, params GetFlipsRequest) (*FlipListResponse, error) {
+	ctx, span := telemetry.StartSpan(ctx, "healthchecksio-api-get-flips", trace.WithAttributes(
+		attribute.String("check.identifier", identifier),
+	))
+	defer span.End()
+
 	address, err := c.buildAddress("/checks/", identifier, "/flips/")
 	if err != nil {
 		return nil, fmt.Errorf("get checks: %v", err)
@@ -541,7 +600,7 @@ func (c *client) GetFlips(identifier string, params GetFlipsRequest) (*FlipListR
 	}
 	address.RawQuery = q.Encode()
 
-	req, err := retryablehttp.NewRequest("GET", address.String(), nil)
+	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", address.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -567,7 +626,13 @@ func (c *client) GetFlips(identifier string, params GetFlipsRequest) (*FlipListR
 }
 
 // Ping sends a ping to a check (success by default; supports hc-ping.com UUID or /api/v3/ping/<unique_key>)
-func (c *client) Ping(pingURL, body string, opts ...PingOption) error {
+func (c *client) Ping(ctx context.Context, pingURL, body string, opts ...PingOption) error {
+	ctx, span := telemetry.StartSpan(ctx, "healthchecksio-api-ping", trace.WithAttributes(
+		attribute.String("check.ping_body", body),
+		attribute.String("check.ping_url", pingURL),
+	))
+	defer span.End()
+
 	addr, err := url.Parse(pingURL)
 	if err != nil {
 		return fmt.Errorf("parsing ping url: %v", err)
@@ -576,7 +641,7 @@ func (c *client) Ping(pingURL, body string, opts ...PingOption) error {
 		addr = opts[i](addr)
 	}
 
-	req, err := retryablehttp.NewRequest("POST", addr.String(), strings.NewReader(body))
+	req, err := retryablehttp.NewRequestWithContext(ctx, "POST", addr.String(), strings.NewReader(body))
 	if err != nil {
 		return err
 	}
