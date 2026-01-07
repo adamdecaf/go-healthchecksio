@@ -78,7 +78,7 @@ func TestCheckLifecycle(t *testing.T) {
 	require.True(t, found, "created check not found in list with tag filter")
 
 	// Update the check
-	updateReq := &healthchecksio.Check{
+	updateReq := &healthchecksio.UpdateCheck{
 		Name:    "Updated Name",
 		Timeout: 60,
 		Grace:   3600,

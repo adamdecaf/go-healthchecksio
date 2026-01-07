@@ -26,7 +26,7 @@ type Client interface {
 	GetCheck(identifier string) (*Check, error)
 
 	// UpdateCheck updates an existing check by UUID
-	UpdateCheck(uuid string, updates *Check) (*Check, error)
+	UpdateCheck(uuid string, updates *UpdateCheck) (*Check, error)
 
 	// DeleteCheck deletes a check by UUID
 	DeleteCheck(uuid string) (*Check, error)
@@ -111,6 +111,27 @@ type CreateCheck struct {
 	FilterBody        bool     `json:"filter_body,omitempty"`
 	FilterHttpBody    bool     `json:"filter_http_body,omitempty"`
 	FilterDefaultFail bool     `json:"filter_default_fail,omitempty"`
+}
+
+type UpdateCheck struct {
+	Name              string `json:"name,omitempty"`
+	Slug              string `json:"slug,omitempty"`
+	Tags              string `json:"tags,omitempty"`
+	Description       string `json:"desc,omitempty"`
+	Timeout           int    `json:"timeout,omitempty"`
+	Grace             int    `json:"grace,omitempty"`
+	Schedule          string `json:"schedule,omitempty"`
+	Timezone          string `json:"tz,omitempty"`
+	ManualResume      bool   `json:"manual_resume,omitempty"`
+	Methods           string `json:"methods,omitempty"`
+	Channels          string `json:"channels,omitempty"`
+	StartKeywords     string `json:"start_kw,omitempty"`
+	SuccessKeywords   string `json:"success_kw,omitempty"`
+	FailureKeywords   string `json:"failure_kw,omitempty"`
+	FilterSubject     bool   `json:"filter_subject,omitempty"`
+	FilterBody        bool   `json:"filter_body,omitempty"`
+	FilterHttpBody    bool   `json:"filter_http_body,omitempty"`
+	FilterDefaultFail bool   `json:"filter_default_fail,omitempty"`
 }
 
 // Check represents a Healthchecks.io check (from API responses)
@@ -298,7 +319,7 @@ func (c *client) GetCheck(identifier string) (*Check, error) {
 }
 
 // UpdateCheck updates an existing check by UUID
-func (c *client) UpdateCheck(uuid string, updates *Check) (*Check, error) {
+func (c *client) UpdateCheck(uuid string, updates *UpdateCheck) (*Check, error) {
 	reqBody, err := json.Marshal(updates)
 	if err != nil {
 		return nil, err
